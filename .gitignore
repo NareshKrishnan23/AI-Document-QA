@@ -1,0 +1,22 @@
+# Python virtual environment
+backend/venv/
+
+# Environment variables / API keys
+backend/.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Uploaded PDFs
+backend/uploads/
+
+# Node modules
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+
+# Vite environment files
+frontend/.env
+frontend/.env.local
