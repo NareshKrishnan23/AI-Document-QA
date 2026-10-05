@@ -232,7 +232,12 @@ async def upload_pdf(
     file: UploadFile = File(...)
 ):
 
+    global document_chunks
+
+    # --------------------------------------
     # Check file type
+    # --------------------------------------
+
     if file.content_type != "application/pdf":
 
         return {
@@ -240,13 +245,19 @@ async def upload_pdf(
             "message": "Only PDF files are allowed."
         }
 
+    # --------------------------------------
     # Create file path
+    # --------------------------------------
+
     file_path = os.path.join(
         UPLOAD_FOLDER,
         file.filename
     )
 
+    # --------------------------------------
     # Save PDF
+    # --------------------------------------
+
     with open(
         file_path,
         "wb"
@@ -256,49 +267,116 @@ async def upload_pdf(
             await file.read()
         )
 
-    return {
-        "success": True,
-        "message": "PDF uploaded successfully!",
-        "filename": file.filename
-    }
+    print("PDF uploaded:", file.filename)
 
+    # --------------------------------------
+    # Extract PDF text
+    # --------------------------------------
 
-# ==========================================
-# PDF Text Extraction API
-# ==========================================
-
-@app.get("/api/extract/{filename}")
-def extract_pdf_text(filename: str):
-
-    # Create file path
-    file_path = os.path.join(
-        UPLOAD_FOLDER,
-        filename
-    )
-
-    # Check file
-    if not os.path.exists(file_path):
-
-        return {
-            "success": False,
-            "message": "File not found."
-        }
-
-    # Extract text
     text = extract_text_from_pdf(
         file_path
     )
 
-    # Split text
+    if not text:
+
+        return {
+            "success": False,
+            "message": "No text found in PDF."
+        }
+
+    # --------------------------------------
+    # Split into chunks
+    # --------------------------------------
+
     chunks = split_text_into_chunks(
         text
     )
 
+    clean_chunks = []
+
+    for chunk in chunks:
+
+        if chunk is not None:
+
+            chunk = str(chunk).strip()
+
+            if chunk:
+
+                clean_chunks.append(
+                    chunk
+                )
+
+    if not clean_chunks:
+
+        return {
+            "success": False,
+            "message": "No valid text chunks found."
+        }
+
+    print(
+        "Total chunks:",
+        len(clean_chunks)
+    )
+
+    # --------------------------------------
+    # Reset FAISS
+    # --------------------------------------
+
+    index.reset()
+
+    document_chunks = []
+
+    # --------------------------------------
+    # Create embeddings in small batches
+    # --------------------------------------
+
+    BATCH_SIZE = 2
+
+    for start in range(
+        0,
+        len(clean_chunks),
+        BATCH_SIZE
+    ):
+
+        batch = clean_chunks[
+            start:start + BATCH_SIZE
+        ]
+
+        print(
+            f"Embedding chunks "
+            f"{start + 1} - "
+            f"{start + len(batch)} "
+            f"of {len(clean_chunks)}"
+        )
+
+        embeddings = create_embeddings(
+            batch,
+            "RETRIEVAL_DOCUMENT"
+        )
+
+        index.add(
+            embeddings
+        )
+
+        document_chunks.extend(
+            batch
+        )
+
+        del embeddings
+
+    print(
+        "Index created successfully."
+    )
+
+    # --------------------------------------
+    # Return success
+    # --------------------------------------
+
     return {
         "success": True,
-        "filename": filename,
-        "total_chunks": len(chunks),
-        "chunks": chunks
+        "filename": file.filename,
+        "total_chunks": len(document_chunks),
+        "message": "PDF uploaded and indexed successfully."
     }
 
 
