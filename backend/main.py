@@ -158,7 +158,7 @@ def gemini_test():
     for attempt in range(3):
         try:
             chat = client.chats.create(
-                model="gemini-3.8-flash"
+                model="gemini-3.5-flash-lite"
             )
 
             response = chat.send_message(
@@ -477,7 +477,7 @@ If the answer cannot be found in the context, say:
         for attempt in range(3):
             try:
                 chat = client.chats.create(
-                    model="gemini-3.8-flash"
+                    model="gemini-3.5-flash-lite"
                 )
 
                 response = chat.send_message(
