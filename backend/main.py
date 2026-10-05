@@ -1,16 +1,15 @@
 import os
-import faiss
 import time
 
-from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from pypdf import PdfReader
+import faiss
+import numpy as np
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from google import genai
-
-import numpy as np
 from google.genai import types
+from pypdf import PdfReader
 
 
 # ==========================================
@@ -76,7 +75,9 @@ document_chunks = []
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,9 +88,19 @@ app.add_middleware(
 # Upload folder
 # ==========================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+UPLOAD_FOLDER = os.path.join(
+    BASE_DIR,
+    "uploads"
+)
+
+os.makedirs(
+    UPLOAD_FOLDER,
+    exist_ok=True
+)
 
 
 # ==========================================
@@ -117,7 +128,10 @@ def extract_text_from_pdf(file_path):
 # Split text into chunks
 # ==========================================
 
-def split_text_into_chunks(text, chunk_size=500):
+def split_text_into_chunks(
+    text,
+    chunk_size=500
+):
 
     chunks = []
 
@@ -127,7 +141,9 @@ def split_text_into_chunks(text, chunk_size=500):
         chunk_size
     ):
 
-        chunk = text[i:i + chunk_size]
+        chunk = text[
+            i:i + chunk_size
+        ]
 
         if chunk.strip():
 
@@ -190,7 +206,10 @@ def gemini_test():
 
             error = str(e)
 
-            if "503" in error and attempt < 2:
+            if (
+                "503" in error
+                and attempt < 2
+            ):
 
                 time.sleep(5)
 
@@ -213,7 +232,6 @@ async def upload_pdf(
 ):
 
     # Check file type
-
     if file.content_type != "application/pdf":
 
         return {
@@ -221,17 +239,13 @@ async def upload_pdf(
             "message": "Only PDF files are allowed."
         }
 
-
     # Create file path
-
     file_path = os.path.join(
         UPLOAD_FOLDER,
         file.filename
     )
 
-
     # Save PDF
-
     with open(
         file_path,
         "wb"
@@ -240,7 +254,6 @@ async def upload_pdf(
         buffer.write(
             await file.read()
         )
-
 
     return {
         "success": True,
@@ -257,15 +270,12 @@ async def upload_pdf(
 def extract_pdf_text(filename: str):
 
     # Create file path
-
     file_path = os.path.join(
         UPLOAD_FOLDER,
         filename
     )
 
-
     # Check file
-
     if not os.path.exists(file_path):
 
         return {
@@ -273,20 +283,15 @@ def extract_pdf_text(filename: str):
             "message": "File not found."
         }
 
-
     # Extract text
-
     text = extract_text_from_pdf(
         file_path
     )
 
-
     # Split text
-
     chunks = split_text_into_chunks(
         text
     )
-
 
     return {
         "success": True,
@@ -305,13 +310,13 @@ def create_index(filename: str):
 
     global document_chunks
 
-
+    # Create file path
     file_path = os.path.join(
         UPLOAD_FOLDER,
         filename
     )
 
-
+    # Check file
     if not os.path.exists(file_path):
 
         return {
@@ -319,11 +324,13 @@ def create_index(filename: str):
             "message": "File not found."
         }
 
-
+    # --------------------------------------
     # Extract text
+    # --------------------------------------
 
-    text = extract_text_from_pdf(file_path)
-
+    text = extract_text_from_pdf(
+        file_path
+    )
 
     if not text:
 
@@ -332,13 +339,17 @@ def create_index(filename: str):
             "message": "No text found in PDF."
         }
 
-
+    # --------------------------------------
     # Split text
+    # --------------------------------------
 
-    chunks = split_text_into_chunks(text)
+    chunks = split_text_into_chunks(
+        text
+    )
 
-
-    # Make sure every chunk is a normal string
+    # --------------------------------------
+    # Clean chunks
+    # --------------------------------------
 
     clean_chunks = []
 
@@ -350,8 +361,9 @@ def create_index(filename: str):
 
             if chunk:
 
-                clean_chunks.append(chunk)
-
+                clean_chunks.append(
+                    chunk
+                )
 
     if not clean_chunks:
 
@@ -360,6 +372,9 @@ def create_index(filename: str):
             "message": "No valid text chunks found."
         }
 
+    # --------------------------------------
+    # Debug information
+    # --------------------------------------
 
     print(
         "Total chunks:",
@@ -376,34 +391,63 @@ def create_index(filename: str):
         clean_chunks[0][:200]
     )
 
-
-    # Convert chunks into Gemini embeddings
-
-    embeddings = create_embeddings(
-        clean_chunks,
-        "RETRIEVAL_DOCUMENT"
-    )
-
-
-    # Reset old index
+    # --------------------------------------
+    # Reset old FAISS index
+    # --------------------------------------
 
     index.reset()
 
+    document_chunks = []
 
-    # Add embeddings to FAISS
+    # --------------------------------------
+    # Create embeddings in batches
+    # --------------------------------------
 
-    index.add(embeddings)
+    BATCH_SIZE = 8
 
+    for start in range(
+        0,
+        len(clean_chunks),
+        BATCH_SIZE
+    ):
 
-    # Store chunks
+        batch = clean_chunks[
+            start:start + BATCH_SIZE
+        ]
 
-    document_chunks = clean_chunks
+        print(
+            f"Creating embeddings for chunks "
+            f"{start + 1} to "
+            f"{start + len(batch)} "
+            f"of {len(clean_chunks)}"
+        )
 
+        embeddings = create_embeddings(
+            batch,
+            "RETRIEVAL_DOCUMENT"
+        )
+
+        # Add embeddings to FAISS
+        index.add(
+            embeddings
+        )
+
+        # Store document chunks
+        document_chunks.extend(
+            batch
+        )
+
+        # Release embedding memory
+        del embeddings
+
+    # --------------------------------------
+    # Return success
+    # --------------------------------------
 
     return {
         "success": True,
         "filename": filename,
-        "total_chunks": len(clean_chunks),
+        "total_chunks": len(document_chunks),
         "message": "Chunks converted to embeddings and added to FAISS."
     }
 
@@ -415,40 +459,46 @@ def create_index(filename: str):
 @app.get("/api/search")
 def search_document(query: str):
 
-    if index.ntotal == 0 or not document_chunks:
+    if (
+        index.ntotal == 0
+        or not document_chunks
+    ):
 
         return {
             "success": False,
             "message": "No document has been indexed. Please create the index first."
         }
 
-
-    # Convert user's question into a Gemini query embedding
+    # --------------------------------------
+    # Create query embedding
+    # --------------------------------------
 
     query_embedding = create_embeddings(
         [query],
         "RETRIEVAL_QUERY"
     )
 
-
-    # Search FAISS for the 3 most relevant chunks
+    # --------------------------------------
+    # Search FAISS
+    # --------------------------------------
 
     distances, indices = index.search(
         query_embedding,
         3
     )
 
-
     results = []
 
     for i in indices[0]:
 
-        if i != -1 and i < len(document_chunks):
+        if (
+            i != -1
+            and i < len(document_chunks)
+        ):
 
             results.append(
                 document_chunks[i]
             )
-
 
     if not results:
 
@@ -456,7 +506,6 @@ def search_document(query: str):
             "success": False,
             "message": "No relevant information found in the document."
         }
-
 
     return {
         "success": True,
@@ -476,16 +525,18 @@ def ask_question(query: str):
     # Check whether document is indexed
     # --------------------------------------
 
-    if index.ntotal == 0 or not document_chunks:
+    if (
+        index.ntotal == 0
+        or not document_chunks
+    ):
 
         return {
             "success": False,
             "message": "No document has been indexed. Please create the index first."
         }
 
-
     # --------------------------------------
-    # Step 1: Convert question into Gemini embedding
+    # Step 1: Create question embedding
     # --------------------------------------
 
     try:
@@ -503,16 +554,14 @@ def ask_question(query: str):
             "error": str(e)
         }
 
-
     # --------------------------------------
-    # Step 2: Search relevant chunks using FAISS
+    # Step 2: Search FAISS
     # --------------------------------------
 
     distances, indices = index.search(
         query_embedding,
         3
     )
-
 
     # --------------------------------------
     # Step 3: Get relevant chunks
@@ -531,9 +580,8 @@ def ask_question(query: str):
                 document_chunks[i]
             )
 
-
     # --------------------------------------
-    # Step 4: Check relevant chunks
+    # Step 4: Check results
     # --------------------------------------
 
     if not relevant_chunks:
@@ -543,18 +591,16 @@ def ask_question(query: str):
             "message": "No relevant information found in the document."
         }
 
-
     # --------------------------------------
-    # Step 5: Combine relevant chunks
+    # Step 5: Combine chunks
     # --------------------------------------
 
     context = "\n\n".join(
         relevant_chunks
     )
 
-
     # --------------------------------------
-    # Step 6: Create prompt for Gemini
+    # Step 6: Create Gemini prompt
     # --------------------------------------
 
     prompt = f"""
@@ -572,7 +618,6 @@ If the answer cannot be found in the context, say:
 
 "The answer is not available in the document."
 """
-
 
     # --------------------------------------
     # Step 7: Ask Gemini
@@ -600,14 +645,16 @@ If the answer cannot be found in the context, say:
 
                 error = str(e)
 
-                if "503" in error and attempt < 2:
+                if (
+                    "503" in error
+                    and attempt < 2
+                ):
 
                     time.sleep(5)
 
                     continue
 
                 raise e
-
 
     except Exception as e:
 
@@ -616,7 +663,6 @@ If the answer cannot be found in the context, say:
             "message": "Gemini service is temporarily unavailable. Please try again.",
             "error": str(e)
         }
-
 
     # --------------------------------------
     # Step 8: Return final result
