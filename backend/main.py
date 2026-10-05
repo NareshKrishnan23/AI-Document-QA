@@ -38,6 +38,7 @@ client = genai.Client(
 # ==========================================
 
 def create_embeddings(texts, task_type):
+
     response = client.models.embed_content(
         model="gemini-embedding-001",
         contents=texts,
@@ -47,9 +48,15 @@ def create_embeddings(texts, task_type):
         )
     )
 
-    embeddings = [embedding.values for embedding in response.embeddings]
+    embeddings = [
+        embedding.values
+        for embedding in response.embeddings
+    ]
 
-    return np.array(embeddings, dtype="float32")
+    return np.array(
+        embeddings,
+        dtype="float32"
+    )
 
 
 # ==========================================
@@ -57,6 +64,7 @@ def create_embeddings(texts, task_type):
 # ==========================================
 
 dimension = 768
+
 index = faiss.IndexFlatL2(dimension)
 
 document_chunks = []
@@ -79,12 +87,9 @@ app.add_middleware(
 # Upload folder
 # ==========================================
 
-UPLOAD_FOLDER = "uploads"
-
-os.makedirs(
-    UPLOAD_FOLDER,
-    exist_ok=True
-)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 # ==========================================
@@ -92,14 +97,17 @@ os.makedirs(
 # ==========================================
 
 def extract_text_from_pdf(file_path):
+
     reader = PdfReader(file_path)
 
     text = ""
 
     for page in reader.pages:
+
         page_text = page.extract_text()
 
         if page_text:
+
             text += page_text + "\n"
 
     return text
@@ -110,6 +118,7 @@ def extract_text_from_pdf(file_path):
 # ==========================================
 
 def split_text_into_chunks(text, chunk_size=500):
+
     chunks = []
 
     for i in range(
@@ -117,9 +126,11 @@ def split_text_into_chunks(text, chunk_size=500):
         len(text),
         chunk_size
     ):
+
         chunk = text[i:i + chunk_size]
 
         if chunk.strip():
+
             chunks.append(
                 chunk.strip()
             )
@@ -133,6 +144,7 @@ def split_text_into_chunks(text, chunk_size=500):
 
 @app.get("/")
 def home():
+
     return {
         "message": "AI Document Q&A Backend is running!"
     }
@@ -144,6 +156,7 @@ def home():
 
 @app.get("/api/message")
 def get_message():
+
     return {
         "message": "Hello from FastAPI Backend!"
     }
@@ -155,8 +168,11 @@ def get_message():
 
 @app.get("/api/gemini-test")
 def gemini_test():
+
     for attempt in range(3):
+
         try:
+
             chat = client.chats.create(
                 model="gemini-3.5-flash-lite"
             )
@@ -171,10 +187,13 @@ def gemini_test():
             }
 
         except Exception as e:
+
             error = str(e)
 
             if "503" in error and attempt < 2:
+
                 time.sleep(5)
+
                 continue
 
             return {
@@ -192,27 +211,36 @@ def gemini_test():
 async def upload_pdf(
     file: UploadFile = File(...)
 ):
+
     # Check file type
+
     if file.content_type != "application/pdf":
+
         return {
             "success": False,
             "message": "Only PDF files are allowed."
         }
 
+
     # Create file path
+
     file_path = os.path.join(
         UPLOAD_FOLDER,
         file.filename
     )
 
+
     # Save PDF
+
     with open(
         file_path,
         "wb"
     ) as buffer:
+
         buffer.write(
             await file.read()
         )
+
 
     return {
         "success": True,
@@ -227,28 +255,38 @@ async def upload_pdf(
 
 @app.get("/api/extract/{filename}")
 def extract_pdf_text(filename: str):
+
     # Create file path
+
     file_path = os.path.join(
         UPLOAD_FOLDER,
         filename
     )
 
+
     # Check file
+
     if not os.path.exists(file_path):
+
         return {
             "success": False,
             "message": "File not found."
         }
 
+
     # Extract text
+
     text = extract_text_from_pdf(
         file_path
     )
 
+
     # Split text
+
     chunks = split_text_into_chunks(
         text
     )
+
 
     return {
         "success": True,
@@ -264,65 +302,103 @@ def extract_pdf_text(filename: str):
 
 @app.get("/api/create-index/{filename}")
 def create_index(filename: str):
+
     global document_chunks
+
 
     file_path = os.path.join(
         UPLOAD_FOLDER,
         filename
     )
 
+
     if not os.path.exists(file_path):
+
         return {
             "success": False,
             "message": "File not found."
         }
 
+
     # Extract text
+
     text = extract_text_from_pdf(file_path)
 
+
     if not text:
+
         return {
             "success": False,
             "message": "No text found in PDF."
         }
 
+
     # Split text
+
     chunks = split_text_into_chunks(text)
 
+
     # Make sure every chunk is a normal string
+
     clean_chunks = []
 
     for chunk in chunks:
+
         if chunk is not None:
+
             chunk = str(chunk).strip()
 
             if chunk:
+
                 clean_chunks.append(chunk)
 
+
     if not clean_chunks:
+
         return {
             "success": False,
             "message": "No valid text chunks found."
         }
 
-    print("Total chunks:", len(clean_chunks))
-    print("First chunk type:", type(clean_chunks[0]))
-    print("First chunk:", clean_chunks[0][:200])
+
+    print(
+        "Total chunks:",
+        len(clean_chunks)
+    )
+
+    print(
+        "First chunk type:",
+        type(clean_chunks[0])
+    )
+
+    print(
+        "First chunk:",
+        clean_chunks[0][:200]
+    )
+
 
     # Convert chunks into Gemini embeddings
+
     embeddings = create_embeddings(
         clean_chunks,
         "RETRIEVAL_DOCUMENT"
     )
 
+
     # Reset old index
+
     index.reset()
 
+
     # Add embeddings to FAISS
+
     index.add(embeddings)
 
+
     # Store chunks
+
     document_chunks = clean_chunks
+
 
     return {
         "success": True,
@@ -338,35 +414,49 @@ def create_index(filename: str):
 
 @app.get("/api/search")
 def search_document(query: str):
+
     if index.ntotal == 0 or not document_chunks:
+
         return {
             "success": False,
             "message": "No document has been indexed. Please create the index first."
         }
 
+
     # Convert user's question into a Gemini query embedding
+
     query_embedding = create_embeddings(
         [query],
         "RETRIEVAL_QUERY"
     )
 
+
     # Search FAISS for the 3 most relevant chunks
+
     distances, indices = index.search(
         query_embedding,
         3
     )
 
+
     results = []
 
     for i in indices[0]:
+
         if i != -1 and i < len(document_chunks):
-            results.append(document_chunks[i])
+
+            results.append(
+                document_chunks[i]
+            )
+
 
     if not results:
+
         return {
             "success": False,
             "message": "No relevant information found in the document."
         }
+
 
     return {
         "success": True,
@@ -381,32 +471,38 @@ def search_document(query: str):
 
 @app.get("/api/ask")
 def ask_question(query: str):
+
     # --------------------------------------
     # Check whether document is indexed
     # --------------------------------------
 
     if index.ntotal == 0 or not document_chunks:
+
         return {
             "success": False,
             "message": "No document has been indexed. Please create the index first."
         }
+
 
     # --------------------------------------
     # Step 1: Convert question into Gemini embedding
     # --------------------------------------
 
     try:
+
         query_embedding = create_embeddings(
             [str(query)],
             "RETRIEVAL_QUERY"
         )
 
     except Exception as e:
+
         return {
             "success": False,
             "message": "Failed to create question embedding.",
             "error": str(e)
         }
+
 
     # --------------------------------------
     # Step 2: Search relevant chunks using FAISS
@@ -417,6 +513,7 @@ def ask_question(query: str):
         3
     )
 
+
     # --------------------------------------
     # Step 3: Get relevant chunks
     # --------------------------------------
@@ -424,23 +521,28 @@ def ask_question(query: str):
     relevant_chunks = []
 
     for i in indices[0]:
+
         if (
             i != -1
             and i < len(document_chunks)
         ):
+
             relevant_chunks.append(
                 document_chunks[i]
             )
+
 
     # --------------------------------------
     # Step 4: Check relevant chunks
     # --------------------------------------
 
     if not relevant_chunks:
+
         return {
             "success": False,
             "message": "No relevant information found in the document."
         }
+
 
     # --------------------------------------
     # Step 5: Combine relevant chunks
@@ -450,6 +552,7 @@ def ask_question(query: str):
         relevant_chunks
     )
 
+
     # --------------------------------------
     # Step 6: Create prompt for Gemini
     # --------------------------------------
@@ -458,24 +561,31 @@ def ask_question(query: str):
 Answer the question using only the information provided in the context.
 
 Context:
+
 {context}
 
 Question:
+
 {query}
 
 If the answer cannot be found in the context, say:
+
 "The answer is not available in the document."
 """
+
 
     # --------------------------------------
     # Step 7: Ask Gemini
     # --------------------------------------
 
     try:
+
         response = None
 
         for attempt in range(3):
+
             try:
+
                 chat = client.chats.create(
                     model="gemini-3.5-flash-lite"
                 )
@@ -487,20 +597,26 @@ If the answer cannot be found in the context, say:
                 break
 
             except Exception as e:
+
                 error = str(e)
 
                 if "503" in error and attempt < 2:
+
                     time.sleep(5)
+
                     continue
 
                 raise e
 
+
     except Exception as e:
+
         return {
             "success": False,
             "message": "Gemini service is temporarily unavailable. Please try again.",
             "error": str(e)
         }
+
 
     # --------------------------------------
     # Step 8: Return final result
