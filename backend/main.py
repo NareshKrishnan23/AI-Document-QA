@@ -233,7 +233,16 @@ def gemini_test():
 # ==========================================
 # PDF Upload API
 # ==========================================
+@app.post("/api/upload")
+async def upload_pdf(
+    file: UploadFile = File(...)
+):
+    print("🔥 UPLOAD ENDPOINT REACHED")
+    print("📄 FILE:", file.filename)
 
+    # your existing code continues here...
+    
+    
 @app.post("/api/upload")
 async def upload_pdf(
     file: UploadFile = File(...)
