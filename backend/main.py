@@ -18,7 +18,14 @@ from pypdf import PdfReader
 
 app = FastAPI()
 
-
+@app.post("/api/test")
+async def test_post():
+    print("🔥 TEST POST RECEIVED")
+    return {
+        "success": True,
+        "message": "POST is working"
+    }
+    
 # ==========================================
 # Load environment variables
 # ==========================================
