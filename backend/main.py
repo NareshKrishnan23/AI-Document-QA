@@ -18,14 +18,7 @@ from pypdf import PdfReader
 
 app = FastAPI()
 
-@app.post("/api/test")
-async def test_post():
-    print("🔥 TEST POST RECEIVED")
-    return {
-        "success": True,
-        "message": "POST is working"
-    }
-    
+
 # ==========================================
 # Load environment variables
 # ==========================================
@@ -34,13 +27,17 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is not set.")
+
+
 client = genai.Client(
     api_key=GEMINI_API_KEY
 )
 
 
 # ==========================================
-# Gemini embedding function
+# Gemini Embedding Function
 # ==========================================
 
 def create_embeddings(texts, task_type):
@@ -66,7 +63,7 @@ def create_embeddings(texts, task_type):
 
 
 # ==========================================
-# FAISS configuration
+# FAISS Configuration
 # ==========================================
 
 dimension = 768
@@ -77,7 +74,7 @@ document_chunks = []
 
 
 # ==========================================
-# CORS configuration
+# CORS Configuration
 # ==========================================
 
 app.add_middleware(
@@ -93,7 +90,7 @@ app.add_middleware(
 
 
 # ==========================================
-# Upload folder
+# Upload Folder
 # ==========================================
 
 BASE_DIR = os.path.dirname(
@@ -112,7 +109,7 @@ os.makedirs(
 
 
 # ==========================================
-# Extract text from PDF
+# Extract Text From PDF
 # ==========================================
 
 def extract_text_from_pdf(file_path):
@@ -133,7 +130,7 @@ def extract_text_from_pdf(file_path):
 
 
 # ==========================================
-# Split text into chunks
+# Split Text Into Chunks
 # ==========================================
 
 def split_text_into_chunks(
@@ -175,7 +172,7 @@ def home():
 
 
 # ==========================================
-# Test API
+# Message Test API
 # ==========================================
 
 @app.get("/api/message")
@@ -233,22 +230,20 @@ def gemini_test():
 # ==========================================
 # PDF Upload API
 # ==========================================
-@app.post("/api/upload")
-async def upload_pdf(
-    file: UploadFile = File(...)
-):
-    print("🔥 UPLOAD ENDPOINT REACHED")
-    print("📄 FILE:", file.filename)
 
-    # your existing code continues here...
-    
-    
 @app.post("/api/upload")
 async def upload_pdf(
     file: UploadFile = File(...)
 ):
 
     global document_chunks
+
+    print("==========================================")
+    print("PDF UPLOAD STARTED")
+    print("File:", file.filename)
+    print("Content Type:", file.content_type)
+    print("==========================================")
+
 
     # --------------------------------------
     # Check file type
@@ -261,6 +256,7 @@ async def upload_pdf(
             "message": "Only PDF files are allowed."
         }
 
+
     # --------------------------------------
     # Create file path
     # --------------------------------------
@@ -270,28 +266,68 @@ async def upload_pdf(
         file.filename
     )
 
+
     # --------------------------------------
     # Save PDF
     # --------------------------------------
 
-    with open(
-        file_path,
-        "wb"
-    ) as buffer:
+    try:
 
-        buffer.write(
-            await file.read()
+        with open(
+            file_path,
+            "wb"
+        ) as buffer:
+
+            buffer.write(
+                await file.read()
+            )
+
+        print(
+            "PDF uploaded:",
+            file.filename
         )
 
-    print("PDF uploaded:", file.filename)
+    except Exception as e:
+
+        print(
+            "PDF save error:",
+            str(e)
+        )
+
+        return {
+            "success": False,
+            "message": "Failed to save PDF.",
+            "error": str(e)
+        }
+
 
     # --------------------------------------
     # Extract PDF text
     # --------------------------------------
 
-    text = extract_text_from_pdf(
-        file_path
-    )
+    try:
+
+        text = extract_text_from_pdf(
+            file_path
+        )
+
+        print(
+            "Text extracted successfully."
+        )
+
+    except Exception as e:
+
+        print(
+            "PDF extraction error:",
+            str(e)
+        )
+
+        return {
+            "success": False,
+            "message": "Failed to extract text from PDF.",
+            "error": str(e)
+        }
+
 
     if not text:
 
@@ -299,6 +335,7 @@ async def upload_pdf(
             "success": False,
             "message": "No text found in PDF."
         }
+
 
     # --------------------------------------
     # Split into chunks
@@ -322,6 +359,7 @@ async def upload_pdf(
                     chunk
                 )
 
+
     if not clean_chunks:
 
         return {
@@ -329,10 +367,12 @@ async def upload_pdf(
             "message": "No valid text chunks found."
         }
 
+
     print(
         "Total chunks:",
         len(clean_chunks)
     )
+
 
     # --------------------------------------
     # Reset FAISS
@@ -342,47 +382,64 @@ async def upload_pdf(
 
     document_chunks = []
 
+
     # --------------------------------------
-    # Create embeddings in small batches
+    # Create embeddings
     # --------------------------------------
 
     BATCH_SIZE = 2
 
-    for start in range(
-        0,
-        len(clean_chunks),
-        BATCH_SIZE
-    ):
+    try:
 
-        batch = clean_chunks[
-            start:start + BATCH_SIZE
-        ]
+        for start in range(
+            0,
+            len(clean_chunks),
+            BATCH_SIZE
+        ):
+
+            batch = clean_chunks[
+                start:start + BATCH_SIZE
+            ]
+
+            print(
+                f"Embedding chunks "
+                f"{start + 1} - "
+                f"{start + len(batch)} "
+                f"of {len(clean_chunks)}"
+            )
+
+            embeddings = create_embeddings(
+                batch,
+                "RETRIEVAL_DOCUMENT"
+            )
+
+            index.add(
+                embeddings
+            )
+
+            document_chunks.extend(
+                batch
+            )
+
+            del embeddings
 
         print(
-            f"Embedding chunks "
-            f"{start + 1} - "
-            f"{start + len(batch)} "
-            f"of {len(clean_chunks)}"
+            "Index created successfully."
         )
 
-        embeddings = create_embeddings(
-            batch,
-            "RETRIEVAL_DOCUMENT"
+    except Exception as e:
+
+        print(
+            "Embedding error:",
+            str(e)
         )
 
-        index.add(
-            embeddings
-        )
+        return {
+            "success": False,
+            "message": "Failed to create document embeddings.",
+            "error": str(e)
+        }
 
-        document_chunks.extend(
-            batch
-        )
-
-        del embeddings
-
-    print(
-        "Index created successfully."
-    )
 
     # --------------------------------------
     # Return success
@@ -393,157 +450,6 @@ async def upload_pdf(
         "filename": file.filename,
         "total_chunks": len(document_chunks),
         "message": "PDF uploaded and indexed successfully."
-    }
-
-
-# ==========================================
-# Create FAISS Index
-# ==========================================
-
-@app.get("/api/create-index/{filename}")
-def create_index(filename: str):
-
-    global document_chunks
-
-    # Create file path
-    file_path = os.path.join(
-        UPLOAD_FOLDER,
-        filename
-    )
-
-    # Check file
-    if not os.path.exists(file_path):
-
-        return {
-            "success": False,
-            "message": "File not found."
-        }
-
-    # --------------------------------------
-    # Extract text
-    # --------------------------------------
-
-    text = extract_text_from_pdf(
-        file_path
-    )
-
-    if not text:
-
-        return {
-            "success": False,
-            "message": "No text found in PDF."
-        }
-
-    # --------------------------------------
-    # Split text
-    # --------------------------------------
-
-    chunks = split_text_into_chunks(
-        text
-    )
-
-    # --------------------------------------
-    # Clean chunks
-    # --------------------------------------
-
-    clean_chunks = []
-
-    for chunk in chunks:
-
-        if chunk is not None:
-
-            chunk = str(chunk).strip()
-
-            if chunk:
-
-                clean_chunks.append(
-                    chunk
-                )
-
-    if not clean_chunks:
-
-        return {
-            "success": False,
-            "message": "No valid text chunks found."
-        }
-
-    # --------------------------------------
-    # Debug information
-    # --------------------------------------
-
-    print(
-        "Total chunks:",
-        len(clean_chunks)
-    )
-
-    print(
-        "First chunk type:",
-        type(clean_chunks[0])
-    )
-
-    print(
-        "First chunk:",
-        clean_chunks[0][:200]
-    )
-
-    # --------------------------------------
-    # Reset old FAISS index
-    # --------------------------------------
-
-    index.reset()
-
-    document_chunks = []
-
-    # --------------------------------------
-    # Create embeddings in batches
-    # --------------------------------------
-
-    BATCH_SIZE = 2
-
-    for start in range(
-        0,
-        len(clean_chunks),
-        BATCH_SIZE
-    ):
-
-        batch = clean_chunks[
-            start:start + BATCH_SIZE
-        ]
-
-        print(
-            f"Creating embeddings for chunks "
-            f"{start + 1} to "
-            f"{start + len(batch)} "
-            f"of {len(clean_chunks)}"
-        )
-
-        embeddings = create_embeddings(
-            batch,
-            "RETRIEVAL_DOCUMENT"
-        )
-
-        # Add embeddings to FAISS
-        index.add(
-            embeddings
-        )
-
-        # Store document chunks
-        document_chunks.extend(
-            batch
-        )
-
-        # Release embedding memory
-        del embeddings
-
-    # --------------------------------------
-    # Return success
-    # --------------------------------------
-
-    return {
-        "success": True,
-        "filename": filename,
-        "total_chunks": len(document_chunks),
-        "message": "Chunks converted to embeddings and added to FAISS."
     }
 
 
@@ -561,17 +467,29 @@ def search_document(query: str):
 
         return {
             "success": False,
-            "message": "No document has been indexed. Please create the index first."
+            "message": "No document has been indexed. Please upload a PDF first."
         }
+
 
     # --------------------------------------
     # Create query embedding
     # --------------------------------------
 
-    query_embedding = create_embeddings(
-        [query],
-        "RETRIEVAL_QUERY"
-    )
+    try:
+
+        query_embedding = create_embeddings(
+            [query],
+            "RETRIEVAL_QUERY"
+        )
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "message": "Failed to create query embedding.",
+            "error": str(e)
+        }
+
 
     # --------------------------------------
     # Search FAISS
@@ -595,12 +513,14 @@ def search_document(query: str):
                 document_chunks[i]
             )
 
+
     if not results:
 
         return {
             "success": False,
             "message": "No relevant information found in the document."
         }
+
 
     return {
         "success": True,
@@ -616,6 +536,9 @@ def search_document(query: str):
 @app.get("/api/ask")
 def ask_question(query: str):
 
+    global document_chunks
+
+
     # --------------------------------------
     # Check whether document is indexed
     # --------------------------------------
@@ -627,8 +550,9 @@ def ask_question(query: str):
 
         return {
             "success": False,
-            "message": "No document has been indexed. Please create the index first."
+            "message": "No document has been indexed. Please upload a PDF first."
         }
+
 
     # --------------------------------------
     # Step 1: Create question embedding
@@ -643,11 +567,17 @@ def ask_question(query: str):
 
     except Exception as e:
 
+        print(
+            "Question embedding error:",
+            str(e)
+        )
+
         return {
             "success": False,
             "message": "Failed to create question embedding.",
             "error": str(e)
         }
+
 
     # --------------------------------------
     # Step 2: Search FAISS
@@ -657,6 +587,7 @@ def ask_question(query: str):
         query_embedding,
         3
     )
+
 
     # --------------------------------------
     # Step 3: Get relevant chunks
@@ -675,6 +606,7 @@ def ask_question(query: str):
                 document_chunks[i]
             )
 
+
     # --------------------------------------
     # Step 4: Check results
     # --------------------------------------
@@ -686,6 +618,7 @@ def ask_question(query: str):
             "message": "No relevant information found in the document."
         }
 
+
     # --------------------------------------
     # Step 5: Combine chunks
     # --------------------------------------
@@ -693,6 +626,7 @@ def ask_question(query: str):
     context = "\n\n".join(
         relevant_chunks
     )
+
 
     # --------------------------------------
     # Step 6: Create Gemini prompt
@@ -713,6 +647,7 @@ If the answer cannot be found in the context, say:
 
 "The answer is not available in the document."
 """
+
 
     # --------------------------------------
     # Step 7: Ask Gemini
@@ -740,6 +675,11 @@ If the answer cannot be found in the context, say:
 
                 error = str(e)
 
+                print(
+                    f"Gemini attempt {attempt + 1} failed:",
+                    error
+                )
+
                 if (
                     "503" in error
                     and attempt < 2
@@ -751,13 +691,28 @@ If the answer cannot be found in the context, say:
 
                 raise e
 
+
+        if response is None:
+
+            return {
+                "success": False,
+                "message": "Gemini did not return a response."
+            }
+
+
     except Exception as e:
+
+        print(
+            "Gemini error:",
+            str(e)
+        )
 
         return {
             "success": False,
             "message": "Gemini service is temporarily unavailable. Please try again.",
             "error": str(e)
         }
+
 
     # --------------------------------------
     # Step 8: Return final result
