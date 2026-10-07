@@ -1,108 +1,159 @@
 import os
-
 import time
-
-
-
-import faiss
-
 import numpy as np
-
-
 
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.responses import JSONResponse
-
 from fastapi.middleware.cors import CORSMiddleware
 
 from google import genai
-
 from google.genai import types
 
 from pypdf import PdfReader
 
 
+# =========================================================
+# FASTAPI APP
+# =========================================================
+
+app = FastAPI(
+    title="AI Document Q&A Backend"
+)
 
 
-
-# ==========================================
-
-# Create FastAPI application
-
-# ==========================================
-
-
-
-app = FastAPI()
+# =========================================================
+# GLOBAL ERROR HANDLER
+# =========================================================
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    print("UNHANDLED BACKEND ERROR:")
+async def global_exception_handler(
+    request: Request,
+    exc: Exception
+):
+
+    print("\n==========================================")
+    print("UNHANDLED BACKEND ERROR")
     print("Method:", request.method)
     print("Path:", request.url.path)
     print("Error:", repr(exc))
+    print("==========================================\n")
 
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "message": "Backend error while processing the request.",
-            "error": str(exc),
-        },
+            "error": str(exc)
+        }
     )
 
 
-
-
-
-
-# ==========================================
-
-# Load environment variables
-
-# ==========================================
-
-
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
+# =========================================================
 
 load_dotenv()
 
-
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-
+GEMINI_API_KEY = os.getenv(
+    "GEMINI_API_KEY"
+)
 
 if not GEMINI_API_KEY:
 
-    print("WARNING: GEMINI_API_KEY is not set.")
+    print(
+        "WARNING: GEMINI_API_KEY is not set."
+    )
+
+else:
+
+    print(
+        "GEMINI_API_KEY loaded successfully."
+    )
 
 
-
-
+# =========================================================
+# GEMINI CLIENT
+# =========================================================
 
 client = genai.Client(
-
     api_key=GEMINI_API_KEY
-
 )
 
 
+# =========================================================
+# DOCUMENT STORAGE
+# =========================================================
+
+# FAISS IS COMPLETELY REMOVED.
+
+EMBEDDING_DIMENSION = 768
+
+document_chunks = []
+
+document_embeddings = None
 
 
+# =========================================================
+# CORS CONFIGURATION
+# =========================================================
 
-# ==========================================
+CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173"
+]
 
-# Gemini Embedding Function
+app.add_middleware(
+    CORSMiddleware,
 
-# ==========================================
+    allow_origins=CORS_ORIGINS,
+
+    allow_credentials=False,
+
+    allow_methods=["*"],
+
+    allow_headers=["*"]
+)
 
 
+# =========================================================
+# UPLOAD FOLDER
+# =========================================================
 
-def create_embeddings(texts, task_type):
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+UPLOAD_FOLDER = os.path.join(
+    BASE_DIR,
+    "uploads"
+)
+
+os.makedirs(
+    UPLOAD_FOLDER,
+    exist_ok=True
+)
 
 
+# =========================================================
+# CREATE GEMINI EMBEDDINGS
+# =========================================================
+
+def create_embeddings(
+    texts,
+    task_type
+):
+
+    if not texts:
+
+        return np.empty(
+            (
+                0,
+                EMBEDDING_DIMENSION
+            ),
+            dtype=np.float32
+        )
 
     response = client.models.embed_content(
 
@@ -114,1359 +165,938 @@ def create_embeddings(texts, task_type):
 
             task_type=task_type,
 
-            output_dimensionality=768
-
+            output_dimensionality=EMBEDDING_DIMENSION
         )
-
     )
-
-
 
     embeddings = [
-
         embedding.values
-
         for embedding in response.embeddings
-
     ]
 
-
-
-    return np.array(
-
+    return np.asarray(
         embeddings,
-
-        dtype="float32"
-
+        dtype=np.float32
     )
 
 
-
-
-
-# ==========================================
-
-# FAISS Configuration
-
-# ==========================================
-
-
-
-dimension = 768
-
-
-
-index = faiss.IndexFlatL2(dimension)
-
-
-
-document_chunks = []
-
-
-
-
-
-# ==========================================
-
-# CORS Configuration
-
-# ==========================================
-
-
-
-CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-
-
-
-# ==========================================
-
-# Upload Folder
-
-# ==========================================
-
-
-
-BASE_DIR = os.path.dirname(
-
-    os.path.abspath(__file__)
-
-)
-
-
-
-UPLOAD_FOLDER = os.path.join(
-
-    BASE_DIR,
-
-    "uploads"
-
-)
-
-
-
-os.makedirs(
-
-    UPLOAD_FOLDER,
-
-    exist_ok=True
-
-)
-
-
-
-
-
-# ==========================================
-
-# Extract Text From PDF
-
-# ==========================================
-
-
-
-def extract_text_from_pdf(file_path):
-
-
-
-    reader = PdfReader(file_path)
-
-
-
-    text = ""
-
-
-
-    for page in reader.pages:
-
-
-
-        page_text = page.extract_text()
-
-
-
-        if page_text:
-
-
-
-            text += page_text + "\n"
-
-
-
-    return text
-
-
-
-
-
-# ==========================================
-
-# Split Text Into Chunks
-
-# ==========================================
-
-
-
-def split_text_into_chunks(
-
-    text,
-
-    chunk_size=500
-
+# =========================================================
+# NUMPY COSINE SIMILARITY SEARCH
+# =========================================================
+
+def search_embeddings(
+    query_embedding,
+    top_k=3
 ):
 
+    global document_embeddings
 
+    if document_embeddings is None:
+
+        return []
+
+    if len(document_embeddings) == 0:
+
+        return []
+
+    query_vector = np.asarray(
+        query_embedding[0],
+        dtype=np.float32
+    )
+
+    # -----------------------------------------
+    # NORMALIZE QUERY
+    # -----------------------------------------
+
+    query_norm = np.linalg.norm(
+        query_vector
+    )
+
+    if query_norm == 0:
+
+        return []
+
+    query_vector = (
+        query_vector / query_norm
+    )
+
+    # -----------------------------------------
+    # NORMALIZE DOCUMENT EMBEDDINGS
+    # -----------------------------------------
+
+    document_norms = np.linalg.norm(
+        document_embeddings,
+        axis=1,
+        keepdims=True
+    )
+
+    document_norms = np.maximum(
+        document_norms,
+        1e-12
+    )
+
+    normalized_documents = (
+        document_embeddings
+        / document_norms
+    )
+
+    # -----------------------------------------
+    # COSINE SIMILARITY
+    # -----------------------------------------
+
+    scores = (
+        normalized_documents
+        @ query_vector
+    )
+
+    # -----------------------------------------
+    # GET TOP RESULTS
+    # -----------------------------------------
+
+    top_k = min(
+        top_k,
+        len(scores)
+    )
+
+    top_indices = np.argsort(
+        scores
+    )[-top_k:][::-1]
+
+    results = []
+
+    for index in top_indices:
+
+        results.append(
+            (
+                int(index),
+                float(scores[index])
+            )
+        )
+
+    return results
+
+
+# =========================================================
+# EXTRACT TEXT FROM PDF
+# =========================================================
+
+def extract_text_from_pdf(
+    file_path
+):
+
+    reader = PdfReader(
+        file_path
+    )
+
+    text_parts = []
+
+    for page_number, page in enumerate(
+        reader.pages,
+        start=1
+    ):
+
+        try:
+
+            page_text = page.extract_text()
+
+            if page_text:
+
+                text_parts.append(
+                    page_text
+                )
+
+        except Exception as e:
+
+            print(
+                f"Error extracting page {page_number}:",
+                str(e)
+            )
+
+    return "\n".join(
+        text_parts
+    )
+
+
+# =========================================================
+# SPLIT TEXT INTO CHUNKS
+# =========================================================
+
+def split_text_into_chunks(
+    text,
+    chunk_size=500
+):
 
     chunks = []
 
-
-
     for i in range(
-
         0,
-
         len(text),
-
         chunk_size
-
     ):
 
-
-
         chunk = text[
-
             i:i + chunk_size
-
         ]
-
-
 
         if chunk.strip():
 
-
-
             chunks.append(
-
                 chunk.strip()
-
             )
-
-
 
     return chunks
 
 
-
-
-
-# ==========================================
-
-# Home API
-
-# ==========================================
-
-
+# =========================================================
+# HOME API
+# =========================================================
 
 @app.get("/")
-
 def home():
 
-
-
     return {
+        "success": True,
 
-        "message": "AI Document Q&A Backend is running!"
-
+        "message":
+            "AI Document Q&A Backend is running!"
     }
 
 
-
-
-
-# ==========================================
-
-# Message Test API
-
-# ==========================================
-
-
+# =========================================================
+# MESSAGE TEST API
+# =========================================================
 
 @app.get("/api/message")
-
 def get_message():
-
-
 
     return {
 
-        "message": "Hello from FastAPI Backend!"
+        "success": True,
 
+        "message":
+            "Hello from FastAPI Backend!"
     }
 
 
-
-
-
-# ==========================================
-
-# Gemini Test API
-
-# ==========================================
-
-
+# =========================================================
+# GEMINI TEST API
+# =========================================================
 
 @app.get("/api/gemini-test")
-
 def gemini_test():
-
-
 
     for attempt in range(3):
 
-
-
         try:
 
+            response = client.models.generate_content(
 
+                model="gemini-3.5-flash-lite",
 
-            chat = client.chats.create(
-
-                model="gemini-3.5-flash-lite"
-
+                contents=
+                    "Explain what a PDF is in one sentence."
             )
-
-
-
-            response = chat.send_message(
-
-                "Explain what a PDF is in one sentence."
-
-            )
-
-
 
             return {
 
                 "success": True,
 
-                "response": response.text
-
+                "response":
+                    response.text
             }
-
-
 
         except Exception as e:
 
-
-
             error = str(e)
 
-
+            print(
+                f"Gemini test attempt "
+                f"{attempt + 1} failed:",
+                error
+            )
 
             if (
-
                 "503" in error
-
                 and attempt < 2
-
             ):
-
-
 
                 time.sleep(5)
 
-
-
                 continue
-
-
 
             return {
 
                 "success": False,
 
-                "message": "Gemini service is temporarily unavailable.",
+                "message":
+                    "Gemini service is temporarily unavailable.",
 
                 "error": error
-
             }
 
 
-
-
-
-# ==========================================
-
-# PDF Upload API
-
-# ==========================================
-
-
+# =========================================================
+# PDF UPLOAD API
+# =========================================================
 
 @app.post("/api/upload")
-
 async def upload_pdf(
-
     file: UploadFile = File(...)
-
 ):
 
-
-
     global document_chunks
+    global document_embeddings
 
-
-
-    print("==========================================")
-
+    print("\n==========================================")
     print("PDF UPLOAD STARTED")
-
     print("File:", file.filename)
-
     print("Content Type:", file.content_type)
-
     print("==========================================")
 
-
-
-
-
-    # --------------------------------------
-
-    # Check file type
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # CHECK FILE TYPE
+    # -----------------------------------------
 
     if file.content_type != "application/pdf":
 
+        return {
 
+            "success": False,
+
+            "message":
+                "Only PDF files are allowed."
+        }
+
+    if not file.filename:
 
         return {
 
             "success": False,
 
-            "message": "Only PDF files are allowed."
-
+            "message":
+                "No filename received."
         }
 
+    # -----------------------------------------
+    # SAFE FILE NAME
+    # -----------------------------------------
 
-
-
-
-    # --------------------------------------
-
-    # Create file path
-
-    # --------------------------------------
-
-
+    safe_filename = os.path.basename(
+        file.filename
+    )
 
     file_path = os.path.join(
-
         UPLOAD_FOLDER,
-
-        file.filename
-
+        safe_filename
     )
 
-
-
-
-
-    # --------------------------------------
-
-    # Save PDF
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # SAVE PDF
+    # -----------------------------------------
 
     try:
 
-
+        file_data = await file.read()
 
         with open(
-
             file_path,
-
             "wb"
-
         ) as buffer:
 
-
-
             buffer.write(
-
-                await file.read()
-
+                file_data
             )
 
-
+        del file_data
 
         print(
-
             "PDF uploaded:",
-
-            file.filename
-
+            safe_filename
         )
-
-
 
     except Exception as e:
 
-
-
         print(
-
             "PDF save error:",
-
             str(e)
-
         )
-
-
 
         return {
 
             "success": False,
 
-            "message": "Failed to save PDF.",
+            "message":
+                "Failed to save PDF.",
 
-            "error": str(e)
-
+            "error":
+                str(e)
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Extract PDF text
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # EXTRACT PDF TEXT
+    # -----------------------------------------
 
     try:
 
-
-
         text = extract_text_from_pdf(
-
             file_path
-
         )
-
-
 
         print(
-
             "Text extracted successfully."
-
         )
-
-
 
     except Exception as e:
 
-
-
         print(
-
             "PDF extraction error:",
-
             str(e)
-
         )
 
+        return {
 
+            "success": False,
+
+            "message":
+                "Failed to extract text from PDF.",
+
+            "error":
+                str(e)
+        }
+
+    if not text or not text.strip():
 
         return {
 
             "success": False,
 
-            "message": "Failed to extract text from PDF.",
-
-            "error": str(e)
-
+            "message":
+                "No text found in PDF."
         }
 
-
-
-
-
-    if not text:
-
-
-
-        return {
-
-            "success": False,
-
-            "message": "No text found in PDF."
-
-        }
-
-
-
-
-
-    # --------------------------------------
-
-    # Split into chunks
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # SPLIT INTO CHUNKS
+    # -----------------------------------------
 
     chunks = split_text_into_chunks(
-
         text
-
     )
 
-
+    del text
 
     clean_chunks = []
 
-
-
     for chunk in chunks:
-
-
 
         if chunk is not None:
 
-
-
-            chunk = str(chunk).strip()
-
-
+            chunk = str(
+                chunk
+            ).strip()
 
             if chunk:
 
-
-
                 clean_chunks.append(
-
                     chunk
-
                 )
 
-
-
-
+    del chunks
 
     if not clean_chunks:
-
-
 
         return {
 
             "success": False,
 
-            "message": "No valid text chunks found."
-
+            "message":
+                "No valid text chunks found."
         }
 
-
-
-
-
     print(
-
         "Total chunks:",
-
         len(clean_chunks)
-
     )
 
-
-
-
-
-    # --------------------------------------
-
-    # Reset FAISS
-
-    # --------------------------------------
-
-
-
-    index.reset()
-
-
-
-    document_chunks = []
-
-
-
-
-
-    # --------------------------------------
-
-    # Create embeddings
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # CREATE EMBEDDINGS
+    # -----------------------------------------
 
     BATCH_SIZE = 2
 
-
+    all_embedding_batches = []
 
     try:
 
-
-
         for start in range(
-
             0,
-
             len(clean_chunks),
-
             BATCH_SIZE
-
         ):
 
-
-
             batch = clean_chunks[
-
                 start:start + BATCH_SIZE
-
             ]
 
-
-
             print(
-
                 f"Embedding chunks "
-
                 f"{start + 1} - "
-
                 f"{start + len(batch)} "
-
                 f"of {len(clean_chunks)}"
-
             )
-
-
 
             embeddings = create_embeddings(
 
                 batch,
 
                 "RETRIEVAL_DOCUMENT"
-
             )
 
-
-
-            index.add(
-
+            all_embedding_batches.append(
                 embeddings
-
             )
-
-
-
-            document_chunks.extend(
-
-                batch
-
-            )
-
-
 
             del embeddings
 
+        # -------------------------------------
+        # COMBINE EMBEDDINGS
+        # -------------------------------------
 
+        if all_embedding_batches:
+
+            new_embeddings = np.vstack(
+                all_embedding_batches
+            ).astype(
+                np.float32,
+                copy=False
+            )
+
+        else:
+
+            new_embeddings = np.empty(
+                (
+                    0,
+                    EMBEDDING_DIMENSION
+                ),
+                dtype=np.float32
+            )
+
+        # -------------------------------------
+        # SAVE DOCUMENT DATA
+        # -------------------------------------
+
+        document_chunks = clean_chunks
+
+        document_embeddings = new_embeddings
+
+        del all_embedding_batches
 
         print(
-
-            "Index created successfully."
-
+            "Document embeddings created successfully."
         )
 
-
+        print(
+            "Embedding shape:",
+            document_embeddings.shape
+        )
 
     except Exception as e:
 
-
-
         print(
-
             "Embedding error:",
-
             str(e)
-
         )
-
-
 
         return {
 
             "success": False,
 
-            "message": "Failed to create document embeddings.",
+            "message":
+                "Failed to create document embeddings.",
 
-            "error": str(e)
-
+            "error":
+                str(e)
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Return success
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # SUCCESS
+    # -----------------------------------------
 
     return {
 
         "success": True,
 
-        "filename": file.filename,
+        "filename":
+            safe_filename,
 
-        "total_chunks": len(document_chunks),
+        "total_chunks":
+            len(document_chunks),
 
-        "message": "PDF uploaded and indexed successfully."
-
+        "message":
+            "PDF uploaded and indexed successfully."
     }
 
 
-
-
-
-# ==========================================
-
-# Search API
-
-# ==========================================
-
-
+# =========================================================
+# SEARCH API
+# =========================================================
 
 @app.get("/api/search")
+def search_document(
+    query: str
+):
 
-def search_document(query: str):
+    global document_chunks
+    global document_embeddings
 
-
+    # -----------------------------------------
+    # CHECK DOCUMENT
+    # -----------------------------------------
 
     if (
-
-        index.ntotal == 0
-
+        document_embeddings is None
+        or len(document_embeddings) == 0
         or not document_chunks
-
     ):
-
-
 
         return {
 
             "success": False,
 
-            "message": "No document has been indexed. Please upload a PDF first."
-
+            "message":
+                "No document has been indexed. "
+                "Please upload a PDF first."
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Create query embedding
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # QUERY EMBEDDING
+    # -----------------------------------------
 
     try:
-
-
 
         query_embedding = create_embeddings(
 
             [query],
 
             "RETRIEVAL_QUERY"
-
         )
-
-
 
     except Exception as e:
 
-
+        print(
+            "Query embedding error:",
+            str(e)
+        )
 
         return {
 
             "success": False,
 
-            "message": "Failed to create query embedding.",
+            "message":
+                "Failed to create query embedding.",
 
-            "error": str(e)
-
+            "error":
+                str(e)
         }
 
+    # -----------------------------------------
+    # SEARCH
+    # -----------------------------------------
 
-
-
-
-    # --------------------------------------
-
-    # Search FAISS
-
-    # --------------------------------------
-
-
-
-    distances, indices = index.search(
+    matches = search_embeddings(
 
         query_embedding,
 
-        3
-
+        top_k=3
     )
 
-
+    del query_embedding
 
     results = []
 
-
-
-    for i in indices[0]:
-
-
+    for index, score in matches:
 
         if (
-
-            i != -1
-
-            and i < len(document_chunks)
-
+            index >= 0
+            and index < len(document_chunks)
         ):
 
+            results.append({
 
+                "text":
+                    document_chunks[index],
 
-            results.append(
-
-                document_chunks[i]
-
-            )
-
-
-
-
+                "score":
+                    score
+            })
 
     if not results:
-
-
 
         return {
 
             "success": False,
 
-            "message": "No relevant information found in the document."
-
+            "message":
+                "No relevant information found in the document."
         }
-
-
-
-
 
     return {
 
         "success": True,
 
-        "query": query,
+        "query":
+            query,
 
-        "results": results
-
+        "results":
+            results
     }
 
 
-
-
-
-# ==========================================
-
-# Ask Question API
-
-# ==========================================
-
-
+# =========================================================
+# ASK QUESTION API
+# =========================================================
 
 @app.get("/api/ask")
-
-def ask_question(query: str):
-
-
+def ask_question(
+    query: str
+):
 
     global document_chunks
+    global document_embeddings
 
-
-
-
-
-    # --------------------------------------
-
-    # Check whether document is indexed
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # CHECK DOCUMENT
+    # -----------------------------------------
 
     if (
-
-        index.ntotal == 0
-
+        document_embeddings is None
+        or len(document_embeddings) == 0
         or not document_chunks
-
     ):
-
-
 
         return {
 
             "success": False,
 
-            "message": "No document has been indexed. Please upload a PDF first."
-
+            "message":
+                "No document has been indexed. "
+                "Please upload a PDF first."
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 1: Create question embedding
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 1
+    # CREATE QUESTION EMBEDDING
+    # -----------------------------------------
 
     try:
-
-
 
         query_embedding = create_embeddings(
 
             [str(query)],
 
             "RETRIEVAL_QUERY"
-
         )
-
-
 
     except Exception as e:
 
-
-
         print(
-
             "Question embedding error:",
-
             str(e)
-
         )
-
-
 
         return {
 
             "success": False,
 
-            "message": "Failed to create question embedding.",
+            "message":
+                "Failed to create question embedding.",
 
-            "error": str(e)
-
+            "error":
+                str(e)
         }
 
+    # -----------------------------------------
+    # STEP 2
+    # SEARCH DOCUMENT
+    # -----------------------------------------
 
-
-
-
-    # --------------------------------------
-
-    # Step 2: Search FAISS
-
-    # --------------------------------------
-
-
-
-    distances, indices = index.search(
+    matches = search_embeddings(
 
         query_embedding,
 
-        3
-
+        top_k=3
     )
 
+    del query_embedding
 
-
-
-
-    # --------------------------------------
-
-    # Step 3: Get relevant chunks
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 3
+    # GET RELEVANT CHUNKS
+    # -----------------------------------------
 
     relevant_chunks = []
 
-
-
-    for i in indices[0]:
-
-
+    for index, score in matches:
 
         if (
-
-            i != -1
-
-            and i < len(document_chunks)
-
+            index >= 0
+            and index < len(document_chunks)
         ):
 
-
-
             relevant_chunks.append(
-
-                document_chunks[i]
-
+                document_chunks[index]
             )
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 4: Check results
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 4
+    # CHECK RESULTS
+    # -----------------------------------------
 
     if not relevant_chunks:
-
-
 
         return {
 
             "success": False,
 
-            "message": "No relevant information found in the document."
-
+            "message":
+                "No relevant information found in the document."
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 5: Combine chunks
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 5
+    # COMBINE CONTEXT
+    # -----------------------------------------
 
     context = "\n\n".join(
-
         relevant_chunks
-
     )
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 6: Create Gemini prompt
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 6
+    # GEMINI PROMPT
+    # -----------------------------------------
 
     prompt = f"""
-
-Answer the question using only the information provided in the context.
-
-
+Answer the question using only the information
+provided in the context.
 
 Context:
-
-
-
 {context}
 
-
-
 Question:
-
-
-
 {query}
 
+Important instructions:
 
-
-If the answer cannot be found in the context, say:
-
-
+- Answer only from the document context.
+- Do not invent information.
+- Keep the answer clear and easy to understand.
+- If the answer cannot be found in the context, say:
 
 "The answer is not available in the document."
-
 """
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 7: Ask Gemini
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 7
+    # ASK GEMINI
+    # -----------------------------------------
 
     try:
 
-
-
         response = None
-
-
 
         for attempt in range(3):
 
-
-
             try:
 
+                response = client.models.generate_content(
 
+                    model="gemini-3.5-flash-lite",
 
-                chat = client.chats.create(
-
-                    model="gemini-3.5-flash-lite"
-
+                    contents=prompt
                 )
-
-
-
-                response = chat.send_message(
-
-                    prompt
-
-                )
-
-
 
                 break
 
-
-
             except Exception as e:
-
-
 
                 error = str(e)
 
-
-
                 print(
-
-                    f"Gemini attempt {attempt + 1} failed:",
-
+                    f"Gemini attempt "
+                    f"{attempt + 1} failed:",
                     error
-
                 )
 
-
-
                 if (
-
                     "503" in error
-
                     and attempt < 2
-
                 ):
-
-
 
                     time.sleep(5)
 
-
-
                     continue
 
-
-
-                raise e
-
-
-
-
+                raise
 
         if response is None:
-
-
 
             return {
 
                 "success": False,
 
-                "message": "Gemini did not return a response."
-
+                "message":
+                    "Gemini did not return a response."
             }
-
-
-
-
 
     except Exception as e:
 
-
-
         print(
-
             "Gemini error:",
-
             str(e)
-
         )
-
-
 
         return {
 
             "success": False,
 
-            "message": "Gemini service is temporarily unavailable. Please try again.",
+            "message":
+                "Gemini service is temporarily unavailable. "
+                "Please try again.",
 
-            "error": str(e)
-
+            "error":
+                str(e)
         }
 
-
-
-
-
-    # --------------------------------------
-
-    # Step 8: Return final result
-
-    # --------------------------------------
-
-
+    # -----------------------------------------
+    # STEP 8
+    # FINAL RESPONSE
+    # -----------------------------------------
 
     return {
 
         "success": True,
 
-        "question": query,
+        "question":
+            query,
 
-        "context": context,
+        "context":
+            context,
 
-        "answer": response.text
-
+        "answer":
+            response.text
     }
 
-# Final outer CORS wrapper.
-# This ensures CORS headers are present even for unexpected server errors.
-app = CORSMiddleware(
-    app=app,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+
+# =========================================================
+# BACKEND START MESSAGE
+# =========================================================
+
+print("\n==========================================")
+print("AI Document Q&A Backend Loaded")
+print("FAISS: REMOVED")
+print("Search: NumPy Cosine Similarity")
+print(
+    "Embedding Dimension:",
+    EMBEDDING_DIMENSION
 )
+print("==========================================\n")
