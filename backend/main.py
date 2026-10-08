@@ -1,4 +1,5 @@
 import os
+import gc
 import time
 
 import numpy as np
@@ -55,18 +56,12 @@ async def global_exception_handler(
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY"
-)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    print(
-        "WARNING: GEMINI_API_KEY is not set."
-    )
+    print("WARNING: GEMINI_API_KEY is not set.")
 else:
-    print(
-        "GEMINI_API_KEY loaded successfully."
-    )
+    print("GEMINI_API_KEY loaded successfully.")
 
 
 # =========================================================
@@ -82,9 +77,17 @@ client = genai.Client(
 # DOCUMENT STORAGE
 # =========================================================
 
-# FAISS IS COMPLETELY REMOVED.
+# FAISS is NOT used.
+# NumPy cosine similarity is used instead.
 
 EMBEDDING_DIMENSION = 768
+
+# Smaller batch = lower memory usage.
+BATCH_SIZE = 1
+
+# Maximum accepted PDF size.
+# 20 MB is enough for a normal college/document project.
+MAX_FILE_SIZE = 20 * 1024 * 1024
 
 document_chunks = []
 
@@ -92,7 +95,7 @@ document_embeddings = None
 
 
 # =========================================================
-# CORS CONFIGURATION
+# CORS
 # =========================================================
 
 CORS_ORIGINS = [
@@ -132,16 +135,11 @@ os.makedirs(
 # CREATE GEMINI EMBEDDINGS
 # =========================================================
 
-def create_embeddings(
-    texts,
-    task_type
-):
+def create_embeddings(texts, task_type):
+
     if not texts:
         return np.empty(
-            (
-                0,
-                EMBEDDING_DIMENSION
-            ),
+            (0, EMBEDDING_DIMENSION),
             dtype=np.float32
         )
 
@@ -166,13 +164,11 @@ def create_embeddings(
 
 
 # =========================================================
-# NUMPY COSINE SIMILARITY SEARCH
+# NUMPY COSINE SIMILARITY
 # =========================================================
 
-def search_embeddings(
-    query_embedding,
-    top_k=3
-):
+def search_embeddings(query_embedding, top_k=3):
+
     global document_embeddings
 
     if document_embeddings is None:
@@ -181,15 +177,13 @@ def search_embeddings(
     if len(document_embeddings) == 0:
         return []
 
+    # Convert query to float32.
     query_vector = np.asarray(
         query_embedding[0],
         dtype=np.float32
     )
 
-    # -----------------------------------------
-    # NORMALIZE QUERY
-    # -----------------------------------------
-
+    # Normalize query.
     query_norm = np.linalg.norm(
         query_vector
     )
@@ -201,10 +195,7 @@ def search_embeddings(
         query_vector / query_norm
     )
 
-    # -----------------------------------------
-    # NORMALIZE DOCUMENT EMBEDDINGS
-    # -----------------------------------------
-
+    # Normalize document embeddings.
     document_norms = np.linalg.norm(
         document_embeddings,
         axis=1,
@@ -217,27 +208,26 @@ def search_embeddings(
     )
 
     normalized_documents = (
-        document_embeddings
-        / document_norms
+        document_embeddings / document_norms
     )
 
-    # -----------------------------------------
-    # COSINE SIMILARITY
-    # -----------------------------------------
-
+    # Cosine similarity.
     scores = (
-        normalized_documents
-        @ query_vector
+        normalized_documents @ query_vector
     )
 
-    # -----------------------------------------
-    # GET TOP RESULTS
-    # -----------------------------------------
+    # Free temporary normalized array.
+    del normalized_documents
+    del document_norms
 
+    # Number of results.
     top_k = min(
         top_k,
         len(scores)
     )
+
+    if top_k <= 0:
+        return []
 
     top_indices = np.argsort(
         scores
@@ -253,6 +243,8 @@ def search_embeddings(
             )
         )
 
+    del scores
+
     return results
 
 
@@ -260,12 +252,9 @@ def search_embeddings(
 # EXTRACT TEXT FROM PDF
 # =========================================================
 
-def extract_text_from_pdf(
-    file_path
-):
-    reader = PdfReader(
-        file_path
-    )
+def extract_text_from_pdf(file_path):
+
+    reader = PdfReader(file_path)
 
     text_parts = []
 
@@ -273,23 +262,27 @@ def extract_text_from_pdf(
         reader.pages,
         start=1
     ):
+
         try:
+
             page_text = page.extract_text()
 
             if page_text:
-                text_parts.append(
-                    page_text
-                )
+                text_parts.append(page_text)
 
         except Exception as e:
+
             print(
                 f"Error extracting page {page_number}:",
                 str(e)
             )
 
-    return "\n".join(
-        text_parts
-    )
+    text = "\n".join(text_parts)
+
+    # Explicitly release PDF reader.
+    del reader
+
+    return text
 
 
 # =========================================================
@@ -300,6 +293,7 @@ def split_text_into_chunks(
     text,
     chunk_size=500
 ):
+
     chunks = []
 
     for i in range(
@@ -307,11 +301,13 @@ def split_text_into_chunks(
         len(text),
         chunk_size
     ):
+
         chunk = text[
             i:i + chunk_size
         ]
 
         if chunk.strip():
+
             chunks.append(
                 chunk.strip()
             )
@@ -320,7 +316,7 @@ def split_text_into_chunks(
 
 
 # =========================================================
-# HOME API
+# HOME
 # =========================================================
 
 @app.api_route(
@@ -328,6 +324,7 @@ def split_text_into_chunks(
     methods=["GET", "HEAD"]
 )
 def home():
+
     return {
         "success": True,
         "message": "AI Document Q&A Backend is running!"
@@ -335,11 +332,12 @@ def home():
 
 
 # =========================================================
-# MESSAGE TEST API
+# MESSAGE TEST
 # =========================================================
 
 @app.get("/api/message")
 def get_message():
+
     return {
         "success": True,
         "message": "Hello from FastAPI Backend!"
@@ -347,7 +345,7 @@ def get_message():
 
 
 # =========================================================
-# GEMINI TEST API
+# GEMINI TEST
 # =========================================================
 
 @app.get("/api/gemini-test")
@@ -356,6 +354,7 @@ def gemini_test():
     for attempt in range(3):
 
         try:
+
             response = client.models.generate_content(
                 model="gemini-3.5-flash-lite",
                 contents="Explain what a PDF is in one sentence."
@@ -371,8 +370,7 @@ def gemini_test():
             error = str(e)
 
             print(
-                f"Gemini test attempt "
-                f"{attempt + 1} failed:",
+                f"Gemini test attempt {attempt + 1} failed:",
                 error
             )
 
@@ -408,25 +406,27 @@ async def upload_pdf(
     print("Content Type:", file.content_type)
     print("==========================================")
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # CHECK FILE TYPE
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     if file.content_type != "application/pdf":
+
         return {
             "success": False,
             "message": "Only PDF files are allowed."
         }
 
     if not file.filename:
+
         return {
             "success": False,
             "message": "No filename received."
         }
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # SAFE FILE NAME
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     safe_filename = os.path.basename(
         file.filename
@@ -437,28 +437,70 @@ async def upload_pdf(
         safe_filename
     )
 
-    # -----------------------------------------
-    # SAVE PDF
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # CLEAR PREVIOUS DOCUMENT FROM MEMORY
+    # -----------------------------------------------------
+
+    print("Clearing previous document from memory...")
+
+    document_chunks = []
+
+    document_embeddings = None
+
+    gc.collect()
+
+    # -----------------------------------------------------
+    # SAVE PDF WITHOUT READING ENTIRE FILE INTO MEMORY
+    # -----------------------------------------------------
 
     try:
 
-        file_data = await file.read()
+        total_size = 0
 
         with open(
             file_path,
             "wb"
         ) as buffer:
 
-            buffer.write(
-                file_data
-            )
+            while True:
 
-        del file_data
+                chunk = await file.read(
+                    1024 * 1024
+                )
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > MAX_FILE_SIZE:
+
+                    buffer.close()
+
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
+
+                    return {
+                        "success": False,
+                        "message": "PDF is too large. Maximum size is 20 MB."
+                    }
+
+                buffer.write(chunk)
+
+                del chunk
+
+        await file.close()
 
         print(
-            "PDF uploaded:",
-            safe_filename
+            "PDF saved successfully."
+        )
+
+        print(
+            "PDF size:",
+            total_size,
+            "bytes"
         )
 
     except Exception as e:
@@ -474,11 +516,15 @@ async def upload_pdf(
             "error": str(e)
         }
 
-    # -----------------------------------------
+    gc.collect()
+
+    # -----------------------------------------------------
     # EXTRACT PDF TEXT
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     try:
+
+        print("Extracting PDF text...")
 
         text = extract_text_from_pdf(
             file_path
@@ -486,6 +532,11 @@ async def upload_pdf(
 
         print(
             "Text extracted successfully."
+        )
+
+        print(
+            "Text length:",
+            len(text)
         )
 
     except Exception as e:
@@ -502,20 +553,33 @@ async def upload_pdf(
         }
 
     if not text or not text.strip():
+
+        del text
+        gc.collect()
+
         return {
             "success": False,
             "message": "No text found in PDF."
         }
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # SPLIT INTO CHUNKS
-    # -----------------------------------------
+    # -----------------------------------------------------
+
+    print("Splitting document into chunks...")
 
     chunks = split_text_into_chunks(
-        text
+        text,
+        chunk_size=500
     )
 
     del text
+
+    gc.collect()
+
+    # -----------------------------------------------------
+    # CLEAN CHUNKS
+    # -----------------------------------------------------
 
     clean_chunks = []
 
@@ -528,13 +592,17 @@ async def upload_pdf(
             ).strip()
 
             if chunk:
+
                 clean_chunks.append(
                     chunk
                 )
 
     del chunks
 
+    gc.collect()
+
     if not clean_chunks:
+
         return {
             "success": False,
             "message": "No valid text chunks found."
@@ -545,31 +613,56 @@ async def upload_pdf(
         len(clean_chunks)
     )
 
-    # -----------------------------------------
-    # CREATE EMBEDDINGS
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # PRE-ALLOCATE EMBEDDING ARRAY
+    # -----------------------------------------------------
 
-    BATCH_SIZE = 2
-
-    all_embedding_batches = []
+    # IMPORTANT:
+    # We do NOT store every batch in a list.
+    # We create one final NumPy array and fill it.
+    # This reduces memory usage.
 
     try:
 
+        total_chunks = len(
+            clean_chunks
+        )
+
+        new_embeddings = np.empty(
+            (
+                total_chunks,
+                EMBEDDING_DIMENSION
+            ),
+            dtype=np.float32
+        )
+
+        print(
+            "Allocated embedding array:",
+            new_embeddings.shape
+        )
+
+        # -------------------------------------------------
+        # CREATE EMBEDDINGS ONE BATCH AT A TIME
+        # -------------------------------------------------
+
         for start in range(
             0,
-            len(clean_chunks),
+            total_chunks,
             BATCH_SIZE
         ):
 
+            end = min(
+                start + BATCH_SIZE,
+                total_chunks
+            )
+
             batch = clean_chunks[
-                start:start + BATCH_SIZE
+                start:end
             ]
 
             print(
-                f"Embedding chunks "
-                f"{start + 1} - "
-                f"{start + len(batch)} "
-                f"of {len(clean_chunks)}"
+                f"Embedding chunks {start + 1} - {end} "
+                f"of {total_chunks}"
             )
 
             embeddings = create_embeddings(
@@ -577,44 +670,27 @@ async def upload_pdf(
                 "RETRIEVAL_DOCUMENT"
             )
 
-            all_embedding_batches.append(
-                embeddings
-            )
+            # Copy directly into final array.
+            new_embeddings[
+                start:end
+            ] = embeddings
 
+            # Release temporary batch memory.
             del embeddings
+            del batch
 
-        # -------------------------------------
-        # COMBINE EMBEDDINGS
-        # -------------------------------------
+            gc.collect()
 
-        if all_embedding_batches:
-
-            new_embeddings = np.vstack(
-                all_embedding_batches
-            ).astype(
-                np.float32,
-                copy=False
-            )
-
-        else:
-
-            new_embeddings = np.empty(
-                (
-                    0,
-                    EMBEDDING_DIMENSION
-                ),
-                dtype=np.float32
-            )
-
-        # -------------------------------------
+        # -------------------------------------------------
         # SAVE DOCUMENT DATA
-        # -------------------------------------
+        # -------------------------------------------------
 
         document_chunks = clean_chunks
 
         document_embeddings = new_embeddings
 
-        del all_embedding_batches
+        # Do NOT delete new_embeddings here because
+        # document_embeddings points to the same array.
 
         print(
             "Document embeddings created successfully."
@@ -625,6 +701,8 @@ async def upload_pdf(
             document_embeddings.shape
         )
 
+        gc.collect()
+
     except Exception as e:
 
         print(
@@ -632,15 +710,29 @@ async def upload_pdf(
             str(e)
         )
 
+        # Release temporary array if something failed.
+        try:
+            del new_embeddings
+        except Exception:
+            pass
+
+        gc.collect()
+
         return {
             "success": False,
             "message": "Failed to create document embeddings.",
             "error": str(e)
         }
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # SUCCESS
-    # -----------------------------------------
+    # -----------------------------------------------------
+
+    print("\n==========================================")
+    print("PDF UPLOAD COMPLETED SUCCESSFULLY")
+    print("File:", safe_filename)
+    print("Total chunks:", len(document_chunks))
+    print("==========================================\n")
 
     return {
         "success": True,
@@ -662,15 +754,16 @@ def search_document(
     global document_chunks
     global document_embeddings
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # CHECK DOCUMENT
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     if (
         document_embeddings is None
         or len(document_embeddings) == 0
         or not document_chunks
     ):
+
         return {
             "success": False,
             "message": (
@@ -679,9 +772,9 @@ def search_document(
             )
         }
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # QUERY EMBEDDING
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     try:
 
@@ -703,16 +796,21 @@ def search_document(
             "error": str(e)
         }
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # SEARCH
-    # -----------------------------------------
+    # -----------------------------------------------------
 
-    matches = search_embeddings(
-        query_embedding,
-        top_k=3
-    )
+    try:
 
-    del query_embedding
+        matches = search_embeddings(
+            query_embedding,
+            top_k=3
+        )
+
+    finally:
+
+        del query_embedding
+        gc.collect()
 
     results = []
 
@@ -723,12 +821,15 @@ def search_document(
             and index < len(document_chunks)
         ):
 
-            results.append({
-                "text": document_chunks[index],
-                "score": score
-            })
+            results.append(
+                {
+                    "text": document_chunks[index],
+                    "score": score
+                }
+            )
 
     if not results:
+
         return {
             "success": False,
             "message": "No relevant information found in the document."
@@ -753,15 +854,16 @@ def ask_question(
     global document_chunks
     global document_embeddings
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # CHECK DOCUMENT
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     if (
         document_embeddings is None
         or len(document_embeddings) == 0
         or not document_chunks
     ):
+
         return {
             "success": False,
             "message": (
@@ -770,10 +872,9 @@ def ask_question(
             )
         }
 
-    # -----------------------------------------
-    # STEP 1
-    # CREATE QUESTION EMBEDDING
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 1 - QUESTION EMBEDDING
+    # -----------------------------------------------------
 
     try:
 
@@ -795,22 +896,25 @@ def ask_question(
             "error": str(e)
         }
 
-    # -----------------------------------------
-    # STEP 2
-    # SEARCH DOCUMENT
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 2 - SEARCH DOCUMENT
+    # -----------------------------------------------------
 
-    matches = search_embeddings(
-        query_embedding,
-        top_k=3
-    )
+    try:
 
-    del query_embedding
+        matches = search_embeddings(
+            query_embedding,
+            top_k=3
+        )
 
-    # -----------------------------------------
-    # STEP 3
-    # GET RELEVANT CHUNKS
-    # -----------------------------------------
+    finally:
+
+        del query_embedding
+        gc.collect()
+
+    # -----------------------------------------------------
+    # STEP 3 - GET RELEVANT CHUNKS
+    # -----------------------------------------------------
 
     relevant_chunks = []
 
@@ -825,30 +929,28 @@ def ask_question(
                 document_chunks[index]
             )
 
-    # -----------------------------------------
-    # STEP 4
-    # CHECK RESULTS
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 4 - CHECK RESULTS
+    # -----------------------------------------------------
 
     if not relevant_chunks:
+
         return {
             "success": False,
             "message": "No relevant information found in the document."
         }
 
-    # -----------------------------------------
-    # STEP 5
-    # COMBINE CONTEXT
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 5 - COMBINE CONTEXT
+    # -----------------------------------------------------
 
     context = "\n\n".join(
         relevant_chunks
     )
 
-    # -----------------------------------------
-    # STEP 6
-    # GEMINI PROMPT
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 6 - GEMINI PROMPT
+    # -----------------------------------------------------
 
     prompt = f"""
 Answer the question using only the information
@@ -872,10 +974,9 @@ Important instructions:
 "The answer is not available in the document."
 """
 
-    # -----------------------------------------
-    # STEP 7
-    # ASK GEMINI
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 7 - ASK GEMINI
+    # -----------------------------------------------------
 
     try:
 
@@ -897,8 +998,7 @@ Important instructions:
                 error = str(e)
 
                 print(
-                    f"Gemini attempt "
-                    f"{attempt + 1} failed:",
+                    f"Gemini attempt {attempt + 1} failed:",
                     error
                 )
 
@@ -906,12 +1006,14 @@ Important instructions:
                     "503" in error
                     and attempt < 2
                 ):
+
                     time.sleep(5)
                     continue
 
                 raise
 
         if response is None:
+
             return {
                 "success": False,
                 "message": "Gemini did not return a response."
@@ -933,16 +1035,23 @@ Important instructions:
             "error": str(e)
         }
 
-    # -----------------------------------------
-    # STEP 8
-    # FINAL RESPONSE
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # STEP 8 - FINAL RESPONSE
+    # -----------------------------------------------------
+
+    answer = response.text
+
+    # Release response/context references where possible.
+    del response
+    del context
+    del relevant_chunks
+
+    gc.collect()
 
     return {
         "success": True,
         "question": query,
-        "context": context,
-        "answer": response.text
+        "answer": answer
     }
 
 
@@ -954,55 +1063,6 @@ print("\n==========================================")
 print("AI Document Q&A Backend Loaded")
 print("FAISS: REMOVED")
 print("Search: NumPy Cosine Similarity")
-print(
-    "Embedding Dimension:",
-    EMBEDDING_DIMENSION
-)
+print("Embedding Dimension:", EMBEDDING_DIMENSION)
+print("Embedding Batch Size:", BATCH_SIZE)
 print("==========================================\n")
-
-@app.post("/api/test-post")
-async def test_post():
-    print("==========================================")
-    print("TEST POST RECEIVED")
-    print("==========================================")
-
-    return {
-        "success": True,
-        "message": "POST request reached FastAPI successfully!"
-    }
-    
-    
-@app.post("/api/upload-test")
-async def upload_test(file: UploadFile = File(...)):
-    print("==========================================")
-    print("UPLOAD TEST RECEIVED")
-    print("Filename:", file.filename)
-    print("==========================================")
-
-    content = await file.read()
-
-    return {
-        "success": True,
-        "filename": file.filename,
-        "size": len(content),
-        "message": "Multipart upload reached FastAPI successfully!"
-    }
-    
-@app.post("/api/upload-test-real")
-async def upload_test_real(file: UploadFile = File(...)):
-    print("==========================================")
-    print("REAL PDF UPLOAD TEST STARTED")
-    print("Filename:", file.filename)
-
-    content = await file.read()
-
-    print("PDF SIZE:", len(content))
-    print("REAL PDF UPLOAD TEST FINISHED")
-    print("==========================================")
-
-    return {
-        "success": True,
-        "filename": file.filename,
-        "size": len(content),
-        "message": "Real PDF reached FastAPI successfully!"
-    }    
