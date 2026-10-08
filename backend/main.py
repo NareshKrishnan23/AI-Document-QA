@@ -987,3 +987,22 @@ async def upload_test(file: UploadFile = File(...)):
         "size": len(content),
         "message": "Multipart upload reached FastAPI successfully!"
     }
+    
+@app.post("/api/upload-test-real")
+async def upload_test_real(file: UploadFile = File(...)):
+    print("==========================================")
+    print("REAL PDF UPLOAD TEST STARTED")
+    print("Filename:", file.filename)
+
+    content = await file.read()
+
+    print("PDF SIZE:", len(content))
+    print("REAL PDF UPLOAD TEST FINISHED")
+    print("==========================================")
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "size": len(content),
+        "message": "Real PDF reached FastAPI successfully!"
+    }    
