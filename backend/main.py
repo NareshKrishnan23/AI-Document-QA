@@ -970,3 +970,20 @@ async def test_post():
         "success": True,
         "message": "POST request reached FastAPI successfully!"
     }
+    
+    
+@app.post("/api/upload-test")
+async def upload_test(file: UploadFile = File(...)):
+    print("==========================================")
+    print("UPLOAD TEST RECEIVED")
+    print("Filename:", file.filename)
+    print("==========================================")
+
+    content = await file.read()
+
+    return {
+        "success": True,
+        "filename": file.filename,
+        "size": len(content),
+        "message": "Multipart upload reached FastAPI successfully!"
+    }
