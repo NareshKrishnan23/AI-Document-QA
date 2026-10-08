@@ -1,7 +1,7 @@
 import os
 import time
-import numpy as np
 
+import numpy as np
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, UploadFile, Request
@@ -32,7 +32,6 @@ async def global_exception_handler(
     request: Request,
     exc: Exception
 ):
-
     print("\n==========================================")
     print("UNHANDLED BACKEND ERROR")
     print("Method:", request.method)
@@ -61,13 +60,10 @@ GEMINI_API_KEY = os.getenv(
 )
 
 if not GEMINI_API_KEY:
-
     print(
         "WARNING: GEMINI_API_KEY is not set."
     )
-
 else:
-
     print(
         "GEMINI_API_KEY loaded successfully."
     )
@@ -106,13 +102,9 @@ CORS_ORIGINS = [
 
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=CORS_ORIGINS,
-
     allow_credentials=False,
-
     allow_methods=["*"],
-
     allow_headers=["*"]
 )
 
@@ -144,9 +136,7 @@ def create_embeddings(
     texts,
     task_type
 ):
-
     if not texts:
-
         return np.empty(
             (
                 0,
@@ -156,15 +146,10 @@ def create_embeddings(
         )
 
     response = client.models.embed_content(
-
         model="gemini-embedding-001",
-
         contents=texts,
-
         config=types.EmbedContentConfig(
-
             task_type=task_type,
-
             output_dimensionality=EMBEDDING_DIMENSION
         )
     )
@@ -188,15 +173,12 @@ def search_embeddings(
     query_embedding,
     top_k=3
 ):
-
     global document_embeddings
 
     if document_embeddings is None:
-
         return []
 
     if len(document_embeddings) == 0:
-
         return []
 
     query_vector = np.asarray(
@@ -213,7 +195,6 @@ def search_embeddings(
     )
 
     if query_norm == 0:
-
         return []
 
     query_vector = (
@@ -265,7 +246,6 @@ def search_embeddings(
     results = []
 
     for index in top_indices:
-
         results.append(
             (
                 int(index),
@@ -283,7 +263,6 @@ def search_embeddings(
 def extract_text_from_pdf(
     file_path
 ):
-
     reader = PdfReader(
         file_path
     )
@@ -294,19 +273,15 @@ def extract_text_from_pdf(
         reader.pages,
         start=1
     ):
-
         try:
-
             page_text = page.extract_text()
 
             if page_text:
-
                 text_parts.append(
                     page_text
                 )
 
         except Exception as e:
-
             print(
                 f"Error extracting page {page_number}:",
                 str(e)
@@ -325,7 +300,6 @@ def split_text_into_chunks(
     text,
     chunk_size=500
 ):
-
     chunks = []
 
     for i in range(
@@ -333,13 +307,11 @@ def split_text_into_chunks(
         len(text),
         chunk_size
     ):
-
         chunk = text[
             i:i + chunk_size
         ]
 
         if chunk.strip():
-
             chunks.append(
                 chunk.strip()
             )
@@ -351,14 +323,14 @@ def split_text_into_chunks(
 # HOME API
 # =========================================================
 
-@app.get("/")
+@app.api_route(
+    "/",
+    methods=["GET", "HEAD"]
+)
 def home():
-
     return {
         "success": True,
-
-        "message":
-            "AI Document Q&A Backend is running!"
+        "message": "AI Document Q&A Backend is running!"
     }
 
 
@@ -368,13 +340,9 @@ def home():
 
 @app.get("/api/message")
 def get_message():
-
     return {
-
         "success": True,
-
-        "message":
-            "Hello from FastAPI Backend!"
+        "message": "Hello from FastAPI Backend!"
     }
 
 
@@ -388,21 +356,14 @@ def gemini_test():
     for attempt in range(3):
 
         try:
-
             response = client.models.generate_content(
-
                 model="gemini-3.5-flash-lite",
-
-                contents=
-                    "Explain what a PDF is in one sentence."
+                contents="Explain what a PDF is in one sentence."
             )
 
             return {
-
                 "success": True,
-
-                "response":
-                    response.text
+                "response": response.text
             }
 
         except Exception as e:
@@ -419,18 +380,12 @@ def gemini_test():
                 "503" in error
                 and attempt < 2
             ):
-
                 time.sleep(5)
-
                 continue
 
             return {
-
                 "success": False,
-
-                "message":
-                    "Gemini service is temporarily unavailable.",
-
+                "message": "Gemini service is temporarily unavailable.",
                 "error": error
             }
 
@@ -458,23 +413,15 @@ async def upload_pdf(
     # -----------------------------------------
 
     if file.content_type != "application/pdf":
-
         return {
-
             "success": False,
-
-            "message":
-                "Only PDF files are allowed."
+            "message": "Only PDF files are allowed."
         }
 
     if not file.filename:
-
         return {
-
             "success": False,
-
-            "message":
-                "No filename received."
+            "message": "No filename received."
         }
 
     # -----------------------------------------
@@ -522,14 +469,9 @@ async def upload_pdf(
         )
 
         return {
-
             "success": False,
-
-            "message":
-                "Failed to save PDF.",
-
-            "error":
-                str(e)
+            "message": "Failed to save PDF.",
+            "error": str(e)
         }
 
     # -----------------------------------------
@@ -554,24 +496,15 @@ async def upload_pdf(
         )
 
         return {
-
             "success": False,
-
-            "message":
-                "Failed to extract text from PDF.",
-
-            "error":
-                str(e)
+            "message": "Failed to extract text from PDF.",
+            "error": str(e)
         }
 
     if not text or not text.strip():
-
         return {
-
             "success": False,
-
-            "message":
-                "No text found in PDF."
+            "message": "No text found in PDF."
         }
 
     # -----------------------------------------
@@ -595,7 +528,6 @@ async def upload_pdf(
             ).strip()
 
             if chunk:
-
                 clean_chunks.append(
                     chunk
                 )
@@ -603,13 +535,9 @@ async def upload_pdf(
     del chunks
 
     if not clean_chunks:
-
         return {
-
             "success": False,
-
-            "message":
-                "No valid text chunks found."
+            "message": "No valid text chunks found."
         }
 
     print(
@@ -645,9 +573,7 @@ async def upload_pdf(
             )
 
             embeddings = create_embeddings(
-
                 batch,
-
                 "RETRIEVAL_DOCUMENT"
             )
 
@@ -707,14 +633,9 @@ async def upload_pdf(
         )
 
         return {
-
             "success": False,
-
-            "message":
-                "Failed to create document embeddings.",
-
-            "error":
-                str(e)
+            "message": "Failed to create document embeddings.",
+            "error": str(e)
         }
 
     # -----------------------------------------
@@ -722,17 +643,10 @@ async def upload_pdf(
     # -----------------------------------------
 
     return {
-
         "success": True,
-
-        "filename":
-            safe_filename,
-
-        "total_chunks":
-            len(document_chunks),
-
-        "message":
-            "PDF uploaded and indexed successfully."
+        "filename": safe_filename,
+        "total_chunks": len(document_chunks),
+        "message": "PDF uploaded and indexed successfully."
     }
 
 
@@ -757,14 +671,12 @@ def search_document(
         or len(document_embeddings) == 0
         or not document_chunks
     ):
-
         return {
-
             "success": False,
-
-            "message":
+            "message": (
                 "No document has been indexed. "
                 "Please upload a PDF first."
+            )
         }
 
     # -----------------------------------------
@@ -774,9 +686,7 @@ def search_document(
     try:
 
         query_embedding = create_embeddings(
-
             [query],
-
             "RETRIEVAL_QUERY"
         )
 
@@ -788,14 +698,9 @@ def search_document(
         )
 
         return {
-
             "success": False,
-
-            "message":
-                "Failed to create query embedding.",
-
-            "error":
-                str(e)
+            "message": "Failed to create query embedding.",
+            "error": str(e)
         }
 
     # -----------------------------------------
@@ -803,9 +708,7 @@ def search_document(
     # -----------------------------------------
 
     matches = search_embeddings(
-
         query_embedding,
-
         top_k=3
     )
 
@@ -821,33 +724,20 @@ def search_document(
         ):
 
             results.append({
-
-                "text":
-                    document_chunks[index],
-
-                "score":
-                    score
+                "text": document_chunks[index],
+                "score": score
             })
 
     if not results:
-
         return {
-
             "success": False,
-
-            "message":
-                "No relevant information found in the document."
+            "message": "No relevant information found in the document."
         }
 
     return {
-
         "success": True,
-
-        "query":
-            query,
-
-        "results":
-            results
+        "query": query,
+        "results": results
     }
 
 
@@ -872,14 +762,12 @@ def ask_question(
         or len(document_embeddings) == 0
         or not document_chunks
     ):
-
         return {
-
             "success": False,
-
-            "message":
+            "message": (
                 "No document has been indexed. "
                 "Please upload a PDF first."
+            )
         }
 
     # -----------------------------------------
@@ -890,9 +778,7 @@ def ask_question(
     try:
 
         query_embedding = create_embeddings(
-
             [str(query)],
-
             "RETRIEVAL_QUERY"
         )
 
@@ -904,14 +790,9 @@ def ask_question(
         )
 
         return {
-
             "success": False,
-
-            "message":
-                "Failed to create question embedding.",
-
-            "error":
-                str(e)
+            "message": "Failed to create question embedding.",
+            "error": str(e)
         }
 
     # -----------------------------------------
@@ -920,9 +801,7 @@ def ask_question(
     # -----------------------------------------
 
     matches = search_embeddings(
-
         query_embedding,
-
         top_k=3
     )
 
@@ -952,13 +831,9 @@ def ask_question(
     # -----------------------------------------
 
     if not relevant_chunks:
-
         return {
-
             "success": False,
-
-            "message":
-                "No relevant information found in the document."
+            "message": "No relevant information found in the document."
         }
 
     # -----------------------------------------
@@ -980,9 +855,11 @@ Answer the question using only the information
 provided in the context.
 
 Context:
+
 {context}
 
 Question:
+
 {query}
 
 Important instructions:
@@ -1009,9 +886,7 @@ Important instructions:
             try:
 
                 response = client.models.generate_content(
-
                     model="gemini-3.5-flash-lite",
-
                     contents=prompt
                 )
 
@@ -1031,21 +906,15 @@ Important instructions:
                     "503" in error
                     and attempt < 2
                 ):
-
                     time.sleep(5)
-
                     continue
 
                 raise
 
         if response is None:
-
             return {
-
                 "success": False,
-
-                "message":
-                    "Gemini did not return a response."
+                "message": "Gemini did not return a response."
             }
 
     except Exception as e:
@@ -1056,15 +925,12 @@ Important instructions:
         )
 
         return {
-
             "success": False,
-
-            "message":
+            "message": (
                 "Gemini service is temporarily unavailable. "
-                "Please try again.",
-
-            "error":
-                str(e)
+                "Please try again."
+            ),
+            "error": str(e)
         }
 
     # -----------------------------------------
@@ -1073,17 +939,10 @@ Important instructions:
     # -----------------------------------------
 
     return {
-
         "success": True,
-
-        "question":
-            query,
-
-        "context":
-            context,
-
-        "answer":
-            response.text
+        "question": query,
+        "context": context,
+        "answer": response.text
     }
 
 
@@ -1100,3 +959,14 @@ print(
     EMBEDDING_DIMENSION
 )
 print("==========================================\n")
+
+@app.post("/api/test-post")
+async def test_post():
+    print("==========================================")
+    print("TEST POST RECEIVED")
+    print("==========================================")
+
+    return {
+        "success": True,
+        "message": "POST request reached FastAPI successfully!"
+    }
